@@ -95,7 +95,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [repeat, setRepeat] = useState<RepeatMode>("off");
 
   const playerRef = useRef<any>(null);
-  const elRef = useRef<HTMLDivElement | null>(null);
+  const [hostEl, setHostEl] = useState<HTMLDivElement | null>(null);
   const tickRef = useRef<number | null>(null);
 
   const current = currentIndex >= 0 ? queue[currentIndex] ?? null : null;
@@ -108,16 +108,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => storage.set("ip:volume", volume), [volume]);
 
   const setPlayerEl = useCallback((el: HTMLDivElement | null) => {
-    elRef.current = el;
+    setHostEl(el);
   }, []);
 
   // init player when element available
   useEffect(() => {
     let mounted = true;
-    if (!elRef.current) return;
+    if (!hostEl) return;
     loadYouTubeAPI().then(() => {
-      if (!mounted || !elRef.current) return;
-      playerRef.current = new window.YT.Player(elRef.current, {
+      if (!mounted || !hostEl) return;
+      playerRef.current = new window.YT.Player(hostEl, {
         height: "0",
         width: "0",
         playerVars: { autoplay: 0, controls: 0, disablekb: 1, modestbranding: 1, playsinline: 1 },
@@ -133,7 +133,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             else if (e.data === YT.PlayerState.ENDED) handleEnded();
           },
           onError: () => {
-            // skip on unplayable
             handleEnded();
           },
         },
@@ -143,7 +142,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [elRef.current]);
+  }, [hostEl]);
 
   // ticking position
   useEffect(() => {
