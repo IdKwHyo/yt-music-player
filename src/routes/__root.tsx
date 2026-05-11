@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
+import { PlayerProvider } from "@/lib/player-context";
 
 function NotFoundComponent() {
   return (
@@ -72,11 +73,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "Interstellar — Cosmic Music Player" },
+      { name: "description", content: "A cosmic music player powered by YouTube. Spin through galaxies of sound." },
+      { name: "author", content: "Interstellar" },
+      { property: "og:title", content: "Interstellar — Cosmic Music Player" },
+      { property: "og:description", content: "Spin through galaxies of sound." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
@@ -113,7 +114,9 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      <PlayerProvider>
+        <Outlet />
+      </PlayerProvider>
     </QueryClientProvider>
   );
 }
