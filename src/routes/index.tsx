@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CosmicSidebar } from "@/components/CosmicSidebar";
 import { NowPlayingStage } from "@/components/NowPlayingStage";
 import { QueuePanel } from "@/components/QueuePanel";
 import { usePlayer } from "@/lib/player-context";
-import { thumbFor } from "@/lib/tracks";
-import { Heart, Play } from "lucide-react";
+import { thumbFor, type Track } from "@/lib/tracks";
+import { api } from "@/lib/api";
+import { Heart, Loader2, Play } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -13,26 +14,26 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const [view, setView] = useState("home");
-  const { setPlayerEl } = usePlayer();
+  const { error } = usePlayer();
 
   return (
-    <div className="h-screen w-full flex overflow-hidden">
-      <CosmicSidebar active={view} onNavigate={setView} />
-
+    <div className="h-screen w-full flex overflow-hidden flex-col">
+      {error && (
+        <div className="bg-destructive/20 text-destructive-foreground text-xs px-4 py-2 text-center">
+          {error}
+        </div>
+      )}
       <div className="flex-1 flex min-w-0">
-        {view === "home" && <NowPlayingStage />}
-        {view === "search" && <BrowseView title="Search" filter />}
-        {view === "discover" && <BrowseView title="Discover" />}
-        {view === "playlists" && <PlaylistsView />}
-        {view === "liked" && <LikedView />}
-        {view === "history" && <HistoryView />}
-
-        <QueuePanel />
-      </div>
-
-      {/* Hidden YouTube player */}
-      <div className="absolute -left-[9999px] top-0" aria-hidden>
-        <div ref={setPlayerEl} />
+        <CosmicSidebar active={view} onNavigate={setView} />
+        <div className="flex-1 flex min-w-0">
+          {view === "home" && <NowPlayingStage />}
+          {view === "search" && <SearchView />}
+          {view === "discover" && <ChartView />}
+          {view === "playlists" && <PlaylistsView />}
+          {view === "liked" && <LikedView />}
+          {view === "history" && <HistoryView />}
+          <QueuePanel />
+        </div>
       </div>
     </div>
   );
@@ -50,29 +51,89 @@ function PanelShell({ title, children }: { title: string; children: React.ReactN
   );
 }
 
-function BrowseView({ title, filter = false }: { title: string; filter?: boolean }) {
-  const { library, playTrack, toggleLike, liked } = usePlayer();
+function SearchView() {
+  const { playTrack, addToLibrary, toggleLike, liked } = usePlayer();
   const [q, setQ] = useState("");
-  const filtered = filter
-    ? library.filter(
-        (t) =>
-          t.title.toLowerCase().includes(q.toLowerCase()) ||
-          t.artist.toLowerCase().includes(q.toLowerCase())
-      )
-    : library;
+  const [results, setResults] = useState<Track[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) {
+      setResults([]);
+      return;
+    }
+    setLoading(true);
+    const t = setTimeout(() => {
+      api
+        .search(term)
+        .then((r) => setResults(r))
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   return (
-    <PanelShell title={title}>
-      {filter && (
-        <input
-          autoFocus
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search your library…"
-          className="w-full bg-input/50 border border-border rounded-full px-5 py-2.5 text-sm mb-6 focus:outline-none focus:ring-1 focus:ring-ring"
+    <PanelShell title="Search">
+      <input
+        autoFocus
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search any song or artist…"
+        className="w-full bg-input/50 border border-border rounded-full px-5 py-2.5 text-sm mb-6 focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
+          <Loader2 className="h-4 w-4 animate-spin" /> Searching…
+        </div>
+      )}
+      <TrackGrid
+        tracks={results}
+        onPlay={(t) => {
+          addToLibrary(t);
+          playTrack(t, results);
+        }}
+        liked={liked}
+        onLike={toggleLike}
+      />
+    </PanelShell>
+  );
+}
+
+function ChartView() {
+  const { playTrack, addToLibrary, toggleLike, liked, library, setLibrary } = usePlayer();
+  const [loading, setLoading] = useState(false);
+
+  const tracks = useMemo(() => library, [library]);
+
+  useEffect(() => {
+    setLoading(true);
+    api
+      .chart()
+      .then((t) => t?.length && setLibrary(t))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <PanelShell title="Discover · Trending">
+      {loading && tracks.length === 0 ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading chart…
+        </div>
+      ) : (
+        <TrackGrid
+          tracks={tracks}
+          onPlay={(t) => {
+            addToLibrary(t);
+            playTrack(t, tracks);
+          }}
+          liked={liked}
+          onLike={toggleLike}
         />
       )}
-      <TrackGrid tracks={filtered} onPlay={(t) => playTrack(t, filtered)} liked={liked} onLike={toggleLike} />
     </PanelShell>
   );
 }
@@ -135,17 +196,20 @@ function TrackGrid({
   liked,
   onLike,
 }: {
-  tracks: { id: string; title: string; artist: string; album?: string }[];
-  onPlay: (t: any) => void;
+  tracks: Track[];
+  onPlay: (t: Track) => void;
   liked: string[];
   onLike: (id: string) => void;
 }) {
+  if (tracks.length === 0) {
+    return <p className="text-sm text-muted-foreground">Nothing here yet.</p>;
+  }
   return (
     <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
       {tracks.map((t) => (
         <li key={t.id} className="group flex items-center gap-3 p-2 rounded-lg hover:bg-accent/40 transition-colors">
           <div className="relative">
-            <img src={thumbFor(t.id)} alt="" className="h-12 w-12 rounded object-cover" />
+            <img src={thumbFor(t)} alt="" className="h-12 w-12 rounded object-cover" />
             <button
               onClick={() => onPlay(t)}
               className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 rounded transition-opacity"

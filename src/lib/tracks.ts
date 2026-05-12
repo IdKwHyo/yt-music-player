@@ -1,23 +1,17 @@
 export type Track = {
-  id: string; // YouTube video ID
+  id: string; // iTunes trackId from Daydreamin backend
   title: string;
   artist: string;
   album?: string;
+  cover?: string;
+  cover_xl?: string;
+  duration?: number;
+  genre?: string;
+  artist_id?: number;
 };
 
-// Curated cosmic-themed default playlist (royalty-friendly / well-known soundtracks).
-export const DEFAULT_TRACKS: Track[] = [
-  { id: "UDVtMYqUAyw", title: "Cornfield Chase", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "RUuMd4D6stQ", title: "No Time For Caution", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "8xZ41hsYYUE", title: "Stay", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "RbHvxRcFm-c", title: "Mountains", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "8aB1m9tIqCE", title: "S.T.A.Y.", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "j8KL63r9Zcw", title: "Day One", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "u32u8wjyTL8", title: "First Step", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "5w7VcKM_re8", title: "Detach", artist: "Hans Zimmer", album: "Interstellar OST" },
-  { id: "H3v9unphfi0", title: "Time", artist: "Hans Zimmer", album: "Inception OST" },
-  { id: "YoHD9XEInc0", title: "Hoppípolla", artist: "Sigur Rós" },
-];
+// Empty by default — library is now populated from the backend chart on first load.
+export const DEFAULT_TRACKS: Track[] = [];
 
 export const formatTime = (s: number) => {
   if (!isFinite(s) || s < 0) s = 0;
@@ -26,4 +20,13 @@ export const formatTime = (s: number) => {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 };
 
-export const thumbFor = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+const FALLBACK_COVER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='%23111'/><circle cx='32' cy='32' r='12' fill='%23333'/></svg>`
+  );
+
+export const thumbFor = (t: Track | string) => {
+  if (typeof t === "string") return FALLBACK_COVER;
+  return t.cover_xl || t.cover || FALLBACK_COVER;
+};

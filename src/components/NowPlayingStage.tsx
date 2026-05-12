@@ -1,15 +1,52 @@
 import { usePlayer } from "@/lib/player-context";
-import { formatTime, thumbFor } from "@/lib/tracks";
-import { Heart, MoreHorizontal, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
+import { formatTime, thumbFor, type Track } from "@/lib/tracks";
+import { api } from "@/lib/api";
+import { Heart, Loader2, MoreHorizontal, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
 import vinylImg from "@/assets/cosmic-vinyl.jpg";
 import { Slider } from "@/components/ui/slider";
+import { useEffect, useRef, useState } from "react";
 
 export function NowPlayingStage() {
   const {
-    current, isPlaying, position, duration, togglePlay, next, prev,
+    current, isPlaying, isLoadingTrack, position, duration, togglePlay, next, prev,
     seek, shuffle, repeat, toggleShuffle, cycleRepeat,
     liked, toggleLike, volume, setVolume, muted, toggleMute,
+    playTrack, addToLibrary,
   } = usePlayer();
+
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<Track[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      api
+        .search(term)
+        .then((r) => {
+          setResults(r.slice(0, 8));
+          setOpen(true);
+        })
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
 
   const isLiked = current ? liked.includes(current.id) : false;
   const RepeatIcon = repeat === "one" ? Repeat1 : Repeat;
@@ -20,11 +57,41 @@ export function NowPlayingStage() {
 
       {/* Top search */}
       <div className="relative z-10 p-4 border-b border-border/30">
-        <div className="max-w-xl mx-auto">
+        <div className="max-w-xl mx-auto relative" ref={wrapRef}>
           <input
-            placeholder="Search for songs, albums, artists, playlists…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onFocus={() => results.length && setOpen(true)}
+            placeholder="Search for songs, albums, artists…"
             className="w-full bg-input/50 border border-border rounded-full px-5 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
+          {open && (results.length > 0 || searching) && (
+            <div className="absolute left-0 right-0 top-full mt-2 glass-panel rounded-xl p-2 z-20 max-h-96 overflow-y-auto">
+              {searching && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground px-2 py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
+                </div>
+              )}
+              {results.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    addToLibrary(t);
+                    playTrack(t, results);
+                    setOpen(false);
+                    setQ("");
+                  }}
+                  className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-accent/40 text-left"
+                >
+                  <img src={thumbFor(t)} alt="" className="h-9 w-9 rounded object-cover" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate">{t.title}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">{t.artist}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -43,10 +110,15 @@ export function NowPlayingStage() {
           />
           {current && (
             <img
-              src={thumbFor(current.id)}
+              src={thumbFor(current)}
               alt=""
               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1/4 aspect-square rounded-full object-cover ring-2 ring-border"
             />
+          )}
+          {isLoadingTrack && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-foreground/80" />
+            </div>
           )}
         </div>
 
