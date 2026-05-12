@@ -1,8 +1,8 @@
-import { Link, useRouterState } from "@tanstack/react-router";
 import { Home, Search, Sparkles, ListMusic, Heart, Clock, Plus, Settings } from "lucide-react";
 import logo from "@/assets/logo-planet.png";
 import { usePlayer } from "@/lib/player-context";
 import { useState } from "react";
+import { getApiBase, setApiBase } from "@/lib/api";
 
 const navItems = [
   { to: "/", icon: Home, label: "Home" },
