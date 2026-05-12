@@ -1,14 +1,8 @@
 import { usePlayer } from "@/lib/player-context";
-import { formatTime, thumbFor, type Track } from "@/lib/tracks";
-import { Activity, GripVertical, Plus, X } from "lucide-react";
-import { useState } from "react";
-
-function extractYouTubeId(input: string): string | null {
-  const trimmed = input.trim();
-  if (/^[\w-]{11}$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/);
-  return match?.[1] ?? null;
-}
+import { thumbFor, type Track } from "@/lib/tracks";
+import { Activity, GripVertical, Loader2, Plus, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
 
 export function QueuePanel() {
   const {
@@ -16,26 +10,28 @@ export function QueuePanel() {
     playTrack, removeFromQueue, addToQueue,
   } = usePlayer();
   const [showAdd, setShowAdd] = useState(false);
-  const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<Track[]>([]);
+  const [searching, setSearching] = useState(false);
 
   const upNext = queue.slice(currentIndex + 1);
 
-  const handleAdd = (e: React.FormEvent) => {
-    e.preventDefault();
-    const id = extractYouTubeId(url);
-    if (!id) return;
-    const track: Track = {
-      id,
-      title: title.trim() || "Untitled",
-      artist: "Unknown",
-    };
-    addToLibrary(track);
-    addToQueue(track);
-    setUrl("");
-    setTitle("");
-    setShowAdd(false);
-  };
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      api
+        .search(term)
+        .then((r) => setResults(r.slice(0, 6)))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   return (
     <aside className="w-80 shrink-0 hidden lg:flex flex-col gap-3 m-3 ml-0">
@@ -44,11 +40,7 @@ export function QueuePanel() {
         <div className="text-[10px] tracking-[0.3em] text-muted-foreground mb-3">NOW PLAYING</div>
         {current ? (
           <div className="flex items-center gap-3">
-            <img
-              src={thumbFor(current.id)}
-              alt=""
-              className="h-12 w-12 rounded-md object-cover"
-            />
+            <img src={thumbFor(current)} alt="" className="h-12 w-12 rounded-md object-cover" />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{current.title}</div>
               <div className="text-xs text-muted-foreground truncate">{current.artist}</div>
@@ -74,32 +66,48 @@ export function QueuePanel() {
         </div>
 
         {showAdd && (
-          <form onSubmit={handleAdd} className="mb-3 space-y-2">
+          <div className="mb-3 space-y-2">
             <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="YouTube URL or video ID"
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search to add a song…"
               className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Track title (optional)"
-              className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <button
-              type="submit"
-              className="w-full bg-foreground text-background rounded-md py-1.5 text-xs font-medium"
-            >
-              Add to queue
-            </button>
-          </form>
+            {searching && (
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground px-1">
+                <Loader2 className="h-3 w-3 animate-spin" /> Searching…
+              </div>
+            )}
+            <ul className="space-y-1 max-h-48 overflow-y-auto">
+              {results.map((t) => (
+                <li key={t.id}>
+                  <button
+                    onClick={() => {
+                      addToLibrary(t);
+                      addToQueue(t);
+                      setQ("");
+                      setResults([]);
+                      setShowAdd(false);
+                    }}
+                    className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-accent/40 text-left"
+                  >
+                    <img src={thumbFor(t)} alt="" className="h-7 w-7 rounded object-cover" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs truncate">{t.title}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{t.artist}</div>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         <ul className="space-y-1 overflow-y-auto flex-1 -mx-1 pr-1">
           {upNext.length === 0 && (
             <li className="text-xs text-muted-foreground/70 italic px-2 py-4 text-center">
-              Queue is empty. Add tracks or play from your library.
+              Queue is empty. Play something to get suggestions.
             </li>
           )}
           {upNext.map((t, i) => {
@@ -108,11 +116,8 @@ export function QueuePanel() {
               <li key={`${t.id}-${realIndex}`} className="group">
                 <div className="flex items-center gap-2 p-1.5 rounded-md hover:bg-accent/40 transition-colors">
                   <span className="text-xs text-muted-foreground w-5 text-center">{i + 1}</span>
-                  <img src={thumbFor(t.id)} alt="" className="h-9 w-9 rounded object-cover" />
-                  <button
-                    onClick={() => playTrack(t, queue)}
-                    className="flex-1 min-w-0 text-left"
-                  >
+                  <img src={thumbFor(t)} alt="" className="h-9 w-9 rounded object-cover" />
+                  <button onClick={() => playTrack(t, queue)} className="flex-1 min-w-0 text-left">
                     <div className="text-sm truncate">{t.title}</div>
                     <div className="text-[11px] text-muted-foreground truncate">{t.artist}</div>
                   </button>
@@ -140,7 +145,7 @@ export function QueuePanel() {
                   onClick={() => playTrack(t, library)}
                   className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-accent/40 text-left"
                 >
-                  <img src={thumbFor(t.id)} alt="" className="h-7 w-7 rounded object-cover" />
+                  <img src={thumbFor(t)} alt="" className="h-7 w-7 rounded object-cover" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs truncate">{t.title}</div>
                     <div className="text-[10px] text-muted-foreground truncate">{t.artist}</div>
