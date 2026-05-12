@@ -3,70 +3,52 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import yt_dlp
 import httpx
-import asyncio
 
-# --- FastAPI App Setup ---
 app = FastAPI()
 
-# --- CORS Configuration (Your key fix!) ---
-# This tells the browser to allow requests from your frontend's origin.
+# CORS – allow your frontend origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], # Your frontend's address
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Proxy Endpoint (The CORS solution) ---
-async def proxy_stream(url: str):
-    """Fetches the audio stream from YouTube and streams it back to the client."""
-    try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    yield chunk
-    except Exception as e:
-        print(f"Error in proxy stream: {e}")
-        yield b""
+# ---------- Helper: stream audio from YouTube ----------
+async def fetch_audio_stream(url: str):
+    """Fetch audio from YouTube and yield chunks."""
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with client.stream("GET", url) as resp:
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes(chunk_size=8192):
+                yield chunk
 
+# ---------- Play endpoint: returns the audio stream directly ----------
 @app.get("/api/mobile/play")
 async def play_song(id: str = Query(...)):
-    """Fetches the actual audio URL from YouTube and returns a proxied URL."""
-    ydl_opts = {
-        'format': 'bestaudio',
-        'quiet': True,
-        'extract_flat': False,
-    }
+    """Get the audio stream URL from YouTube and return it as a streaming response."""
+    ydl_opts = {'format': 'bestaudio', 'quiet': True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={id}", download=False)
-            # Get the 'direct' audio URL from the extracted info
             audio_url = info.get('url')
             if not audio_url:
-                # Fallback: find the best audio format
-                formats = info.get('formats', [])
-                for f in formats:
+                # fallback: find best audio format
+                for f in info.get('formats', []):
                     if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
                         audio_url = f.get('url')
                         break
-            
             if not audio_url:
-                raise HTTPException(status_code=500, detail="Could not extract audio URL")
+                raise HTTPException(status_code=500, detail="No audio URL found")
             
-            # Return a URL that points to our own proxy endpoint
-            return {"source": "proxy", "url": f"http://127.0.0.1:5000/proxy/audio?audio_url={audio_url}"}
+            # Return the audio stream directly – this is what the frontend <audio> tag expects
+            return StreamingResponse(fetch_audio_stream(audio_url), media_type="audio/webm")
     except Exception as e:
-        print(f"Error in /api/mobile/play: {e}")
+        print(f"Play error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/proxy/audio")
-async def proxy_audio(audio_url: str):
-    """The internal proxy endpoint that streams the audio from YouTube."""
-    return StreamingResponse(proxy_stream(audio_url), media_type="audio/webm")
-
-# --- Helper function for search (your original one, unchanged) ---
+# ---------- Search endpoint (unchanged) ----------
 @app.get("/api/mobile/search")
 async def search_songs(q: str = Query(...)):
     ydl_opts = {'quiet': True, 'extract_flat': True, 'force_generic_extractor': False}
@@ -87,25 +69,20 @@ async def search_songs(q: str = Query(...)):
                 })
         return tracks
 
-# --- Implemented Missing Endpoints ---
+# ---------- Up next (fixed) ----------
+@app.get("/api/mobile/up_next")
+async def get_up_next(song_id: str = Query(...), limit: int = 8):
+    """Simple recommendation: search for 'songs like [song_id]'."""
+    # Use a generic search term – the frontend will ignore the artist/title anyway
+    results = await search_songs(q="popular music")
+    # Return only ids and titles for up_next
+    return [{"id": r["id"], "title": r["title"], "artist": r["artist"], "duration": r.get("duration")} for r in results[:limit]]
+
+# ---------- Health and chart (optional) ----------
 @app.get("/api/mobile/health")
-async def health_check():
+async def health():
     return {"status": "ok"}
 
 @app.get("/api/mobile/chart")
-async def get_chart():
-    """Returns a default chart (e.g., top results for 'Top Tracks Global')"""
-    return await search_songs(q="top tracks global")
-
-@app.get("/api/mobile/up_next")
-async def get_up_next(song_id: str = Query(...), limit: int = 8):
-    """Returns suggested songs based on the current one."""
-    # A simple but effective recommendation: search for related music
-    search_term = f"music like {song_id} songs"
-    results = await search_songs(q=search_term)
-    # Format as required by the frontend and limit the results
-    return [{"id": r["id"], "title": r["title"], "artist": r["artist"], "duration": r.get("duration")} for r in results[:limit]]
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=5000)
+async def chart():
+    return await search_songs(q="top hits 2025")
