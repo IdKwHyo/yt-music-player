@@ -23,6 +23,8 @@ export function CosmicSidebar({
   const { playlists, createPlaylist } = usePlayer();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiUrl, setApiUrl] = useState(() => getApiBase());
 
   return (
     <aside className="w-64 shrink-0 hidden md:flex flex-col glass-panel rounded-2xl m-3 mr-0 overflow-hidden">
