@@ -112,15 +112,43 @@ export function CosmicSidebar({
         </div>
       </nav>
 
-      <div className="border-t border-border/50 p-3 flex items-center gap-3">
+      <div className="border-t border-border/50 p-3 flex items-center gap-3 relative">
         <div className="h-9 w-9 rounded-full bg-gradient-to-br from-nebula to-stardust" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">StarGazer</div>
           <div className="text-[10px] tracking-[0.2em] text-muted-foreground">PREMIUM</div>
         </div>
-        <button className="text-muted-foreground hover:text-foreground">
+        <button
+          onClick={() => setShowSettings((s) => !s)}
+          className="text-muted-foreground hover:text-foreground"
+          aria-label="Settings"
+        >
           <Settings className="h-4 w-4" />
         </button>
+        {showSettings && (
+          <div className="absolute bottom-full left-3 right-3 mb-2 glass-panel rounded-xl p-3 z-30 space-y-2">
+            <div className="text-[10px] tracking-[0.25em] text-muted-foreground">BACKEND URL</div>
+            <input
+              value={apiUrl}
+              onChange={(e) => setApiUrl(e.target.value)}
+              placeholder="http://127.0.0.1:499"
+              className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button
+              onClick={() => {
+                setApiBase(apiUrl);
+                setShowSettings(false);
+                window.location.reload();
+              }}
+              className="w-full bg-foreground text-background rounded-md py-1.5 text-xs font-medium"
+            >
+              Save & reload
+            </button>
+            <p className="text-[10px] text-muted-foreground/70 leading-snug">
+              Run the Daydreamin FastAPI server locally, then point this here. Make sure the React app is also served over http (or the same scheme) to avoid mixed content.
+            </p>
+          </div>
+        )}
       </div>
     </aside>
   );
