@@ -110,10 +110,15 @@ export function NowPlayingStage() {
           />
           {current && (
             <img
-              src={thumbFor(current.id)}
+              src={thumbFor(current)}
               alt=""
               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1/4 aspect-square rounded-full object-cover ring-2 ring-border"
             />
+          )}
+          {isLoadingTrack && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-foreground/80" />
+            </div>
           )}
         </div>
 
