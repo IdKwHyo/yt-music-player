@@ -6,28 +6,26 @@ import httpx
 
 app = FastAPI()
 
-# ✅ CORS: Allow any origin (fixes the blocked requests from localhost:8080)
+# Allow all origins (for development – fixes CORS errors)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # In development only – restrict later if needed
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------- Helper: stream audio from YouTube ----------
+# Helper: stream audio from YouTube
 async def fetch_audio_stream(url: str):
-    """Fetch audio from YouTube and yield chunks."""
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes(chunk_size=8192):
                 yield chunk
 
-# ---------- Play endpoint – returns audio stream directly ----------
+# Play endpoint – returns audio stream directly
 @app.get("/api/mobile/play")
 async def play_song(id: str = Query(...)):
-    """Get the audio stream from YouTube and return it as streaming response."""
     ydl_opts = {'format': 'bestaudio', 'quiet': True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -39,12 +37,12 @@ async def play_song(id: str = Query(...)):
                         audio_url = f.get('url')
                         break
             if not audio_url:
-                raise HTTPException(status_code=500, detail="No audio URL found")
+                raise HTTPException(status_code=500, detail="No audio URL")
             return StreamingResponse(fetch_audio_stream(audio_url), media_type="audio/webm")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ---------- Search endpoint ----------
+# Search endpoint
 @app.get("/api/mobile/search")
 async def search_songs(q: str = Query(...)):
     ydl_opts = {'quiet': True, 'extract_flat': True}
@@ -65,19 +63,18 @@ async def search_songs(q: str = Query(...)):
                 })
         return tracks
 
-# ---------- Up next (simple recommendation) ----------
+# Up next endpoint
 @app.get("/api/mobile/up_next")
 async def get_up_next(song_id: str = Query(...), limit: int = 8):
-    """Return a list of recommended songs (simple fallback)."""
     results = await search_songs(q="popular music")
     return [{"id": r["id"], "title": r["title"], "artist": r["artist"], "duration": r.get("duration")} for r in results[:limit]]
 
-# ---------- Health check ----------
+# Health check
 @app.get("/api/mobile/health")
 async def health():
     return {"status": "ok"}
 
-# ---------- Chart ----------
+# Chart endpoint
 @app.get("/api/mobile/chart")
 async def chart():
     return await search_songs(q="top hits 2025")
