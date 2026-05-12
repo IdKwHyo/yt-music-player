@@ -6,10 +6,10 @@ import httpx
 
 app = FastAPI()
 
-# CORS – allow your frontend origin
+# ✅ CORS: Allow any origin (fixes the blocked requests from localhost:8080)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],          # In development only – restrict later if needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,34 +24,30 @@ async def fetch_audio_stream(url: str):
             async for chunk in resp.aiter_bytes(chunk_size=8192):
                 yield chunk
 
-# ---------- Play endpoint: returns the audio stream directly ----------
+# ---------- Play endpoint – returns audio stream directly ----------
 @app.get("/api/mobile/play")
 async def play_song(id: str = Query(...)):
-    """Get the audio stream URL from YouTube and return it as a streaming response."""
+    """Get the audio stream from YouTube and return it as streaming response."""
     ydl_opts = {'format': 'bestaudio', 'quiet': True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={id}", download=False)
             audio_url = info.get('url')
             if not audio_url:
-                # fallback: find best audio format
                 for f in info.get('formats', []):
                     if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
                         audio_url = f.get('url')
                         break
             if not audio_url:
                 raise HTTPException(status_code=500, detail="No audio URL found")
-            
-            # Return the audio stream directly – this is what the frontend <audio> tag expects
             return StreamingResponse(fetch_audio_stream(audio_url), media_type="audio/webm")
     except Exception as e:
-        print(f"Play error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ---------- Search endpoint (unchanged) ----------
+# ---------- Search endpoint ----------
 @app.get("/api/mobile/search")
 async def search_songs(q: str = Query(...)):
-    ydl_opts = {'quiet': True, 'extract_flat': True, 'force_generic_extractor': False}
+    ydl_opts = {'quiet': True, 'extract_flat': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             results = ydl.extract_info(f"ytsearch10:{q}", download=False)['entries']
@@ -69,20 +65,19 @@ async def search_songs(q: str = Query(...)):
                 })
         return tracks
 
-# ---------- Up next (fixed) ----------
+# ---------- Up next (simple recommendation) ----------
 @app.get("/api/mobile/up_next")
 async def get_up_next(song_id: str = Query(...), limit: int = 8):
-    """Simple recommendation: search for 'songs like [song_id]'."""
-    # Use a generic search term – the frontend will ignore the artist/title anyway
+    """Return a list of recommended songs (simple fallback)."""
     results = await search_songs(q="popular music")
-    # Return only ids and titles for up_next
     return [{"id": r["id"], "title": r["title"], "artist": r["artist"], "duration": r.get("duration")} for r in results[:limit]]
 
-# ---------- Health and chart (optional) ----------
+# ---------- Health check ----------
 @app.get("/api/mobile/health")
 async def health():
     return {"status": "ok"}
 
+# ---------- Chart ----------
 @app.get("/api/mobile/chart")
 async def chart():
     return await search_songs(q="top hits 2025")
