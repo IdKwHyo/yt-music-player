@@ -1,37 +1,30 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_TRACKS, type Track } from "@/lib/tracks";
 import { storage } from "@/lib/storage";
-
-declare global {
-  interface Window {
-    YT: any;
-    onYouTubeIframeAPIReady: () => void;
-  }
-}
+import { api } from "@/lib/api";
 
 type RepeatMode = "off" | "all" | "one";
 
 type PlayerCtx = {
-  // library
   library: Track[];
   liked: string[];
   history: Track[];
   playlists: { id: string; name: string; tracks: Track[] }[];
 
-  // playback
   queue: Track[];
   currentIndex: number;
   current: Track | null;
   isPlaying: boolean;
   isReady: boolean;
+  isLoadingTrack: boolean;
   position: number;
   duration: number;
   volume: number;
   muted: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  error: string | null;
 
-  // actions
   playTrack: (track: Track, queue?: Track[]) => void;
   playQueue: (queue: Track[], startIndex?: number) => void;
   togglePlay: () => void;
@@ -44,11 +37,11 @@ type PlayerCtx = {
   cycleRepeat: () => void;
   toggleLike: (id: string) => void;
   addToLibrary: (track: Track) => void;
+  setLibrary: (tracks: Track[]) => void;
   addToQueue: (track: Track) => void;
   removeFromQueue: (index: number) => void;
   createPlaylist: (name: string) => void;
   addToPlaylist: (playlistId: string, track: Track) => void;
-  setPlayerEl: (el: HTMLDivElement | null) => void;
 };
 
 const Ctx = createContext<PlayerCtx | null>(null);
@@ -59,22 +52,8 @@ export const usePlayer = () => {
   return v;
 };
 
-let apiLoading: Promise<void> | null = null;
-function loadYouTubeAPI(): Promise<void> {
-  if (typeof window === "undefined") return Promise.resolve();
-  if (window.YT && window.YT.Player) return Promise.resolve();
-  if (apiLoading) return apiLoading;
-  apiLoading = new Promise((resolve) => {
-    const tag = document.createElement("script");
-    tag.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(tag);
-    window.onYouTubeIframeAPIReady = () => resolve();
-  });
-  return apiLoading;
-}
-
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
-  const [library, setLibrary] = useState<Track[]>(() =>
+  const [library, setLibraryState] = useState<Track[]>(() =>
     storage.get("ip:library", DEFAULT_TRACKS)
   );
   const [liked, setLiked] = useState<string[]>(() => storage.get("ip:liked", []));
@@ -87,88 +66,94 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [isLoadingTrack, setIsLoadingTrack] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState<number>(() => storage.get("ip:volume", 70));
   const [muted, setMuted] = useState(false);
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
+  const [error, setError] = useState<string | null>(null);
 
-  const playerRef = useRef<any>(null);
-  const [hostEl, setHostEl] = useState<HTMLDivElement | null>(null);
-  const tickRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previousIdRef = useRef<string | undefined>(undefined);
+  const loadTokenRef = useRef(0);
 
   const current = currentIndex >= 0 ? queue[currentIndex] ?? null : null;
 
-  // persist
   useEffect(() => storage.set("ip:library", library), [library]);
   useEffect(() => storage.set("ip:liked", liked), [liked]);
   useEffect(() => storage.set("ip:history", history.slice(0, 50)), [history]);
   useEffect(() => storage.set("ip:playlists", playlists), [playlists]);
   useEffect(() => storage.set("ip:volume", volume), [volume]);
 
-  const setPlayerEl = useCallback((el: HTMLDivElement | null) => {
-    setHostEl(el);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const a = new Audio();
+    a.preload = "auto";
+    a.crossOrigin = "anonymous";
+    a.volume = volume / 100;
+    audioRef.current = a;
+    setIsReady(true);
+
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onTime = () => setPosition(a.currentTime || 0);
+    const onMeta = () => setDuration(a.duration || 0);
+    const onEnded = () => handleEndedRef.current?.();
+    const onError = () => {
+      setError("Audio error — is the backend running?");
+      setIsLoadingTrack(false);
+    };
+
+    a.addEventListener("play", onPlay);
+    a.addEventListener("pause", onPause);
+    a.addEventListener("timeupdate", onTime);
+    a.addEventListener("loadedmetadata", onMeta);
+    a.addEventListener("ended", onEnded);
+    a.addEventListener("error", onError);
+
+    return () => {
+      a.pause();
+      a.removeEventListener("play", onPlay);
+      a.removeEventListener("pause", onPause);
+      a.removeEventListener("timeupdate", onTime);
+      a.removeEventListener("loadedmetadata", onMeta);
+      a.removeEventListener("ended", onEnded);
+      a.removeEventListener("error", onError);
+      audioRef.current = null;
+    };
   }, []);
 
-  // init player when element available
   useEffect(() => {
-    let mounted = true;
-    if (!hostEl) return;
-    loadYouTubeAPI().then(() => {
-      if (!mounted || !hostEl) return;
-      playerRef.current = new window.YT.Player(hostEl, {
-        height: "0",
-        width: "0",
-        playerVars: { autoplay: 0, controls: 0, disablekb: 1, modestbranding: 1, playsinline: 1 },
-        events: {
-          onReady: () => {
-            setIsReady(true);
-            playerRef.current?.setVolume(volume);
-          },
-          onStateChange: (e: any) => {
-            const YT = window.YT;
-            if (e.data === YT.PlayerState.PLAYING) setIsPlaying(true);
-            else if (e.data === YT.PlayerState.PAUSED) setIsPlaying(false);
-            else if (e.data === YT.PlayerState.ENDED) handleEnded();
-          },
-          onError: () => {
-            handleEnded();
-          },
-        },
-      });
-    });
-    return () => {
-      mounted = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostEl]);
+    if (audioRef.current) audioRef.current.volume = (muted ? 0 : volume) / 100;
+  }, [volume, muted]);
 
-  // ticking position
-  useEffect(() => {
-    if (!isPlaying) {
-      if (tickRef.current) window.clearInterval(tickRef.current);
-      return;
-    }
-    tickRef.current = window.setInterval(() => {
+  const handleEndedRef = useRef<() => void>(() => {});
+
+  const loadAndPlay = useCallback(async (track: Track) => {
+    const a = audioRef.current;
+    if (!a) return;
+    const token = ++loadTokenRef.current;
+    setError(null);
+    setIsLoadingTrack(true);
+    setPosition(0);
+    setDuration(0);
+    try {
+      const resp = await api.play(track, previousIdRef.current);
+      if (token !== loadTokenRef.current) return;
+      if (!resp?.url) throw new Error(resp?.error || "No stream URL");
+      a.src = resp.url;
+      previousIdRef.current = track.id;
       try {
-        const p = playerRef.current?.getCurrentTime?.() ?? 0;
-        const d = playerRef.current?.getDuration?.() ?? 0;
-        setPosition(p);
-        setDuration(d);
-      } catch {
-        /* ignore */
+        await a.play();
+      } catch (e) {
       }
-    }, 500);
-    return () => {
-      if (tickRef.current) window.clearInterval(tickRef.current);
-    };
-  }, [isPlaying]);
-
-  const loadAndPlay = useCallback((videoId: string) => {
-    if (!playerRef.current?.loadVideoById) return;
-    playerRef.current.loadVideoById(videoId);
-    setIsPlaying(true);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load track");
+    } finally {
+      if (token === loadTokenRef.current) setIsLoadingTrack(false);
+    }
   }, []);
 
   const playQueue = useCallback(
@@ -178,8 +163,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setCurrentIndex(startIndex);
       const t = q[startIndex];
       if (t) {
-        loadAndPlay(t.id);
+        loadAndPlay(t);
         setHistory((h) => [t, ...h.filter((x) => x.id !== t.id)]);
+        api
+          .upNext(t.id, 8)
+          .then((up) => {
+            if (!up?.length) return;
+            setQueue((cur) => {
+              const existing = new Set(cur.map((x) => x.id));
+              const extras = up.filter((x) => !existing.has(x.id));
+              return [...cur, ...extras];
+            });
+          })
+          .catch(() => {});
       }
     },
     [loadAndPlay]
@@ -195,10 +191,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const togglePlay = useCallback(() => {
-    if (!playerRef.current) return;
-    if (isPlaying) playerRef.current.pauseVideo();
-    else playerRef.current.playVideo();
-  }, [isPlaying]);
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) a.play().catch(() => {});
+    else a.pause();
+  }, []);
 
   const pickNextIndex = useCallback(() => {
     if (queue.length === 0) return -1;
@@ -217,65 +214,53 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const next = useCallback(() => {
     const n = pickNextIndex();
     if (n === -1) {
-      setIsPlaying(false);
+      audioRef.current?.pause();
       return;
     }
     setCurrentIndex(n);
     const t = queue[n];
     if (t) {
-      loadAndPlay(t.id);
+      loadAndPlay(t);
       setHistory((h) => [t, ...h.filter((x) => x.id !== t.id)]);
     }
   }, [pickNextIndex, queue, loadAndPlay]);
 
   const prev = useCallback(() => {
-    if (position > 3 && playerRef.current?.seekTo) {
-      playerRef.current.seekTo(0, true);
+    const a = audioRef.current;
+    if (a && a.currentTime > 3) {
+      a.currentTime = 0;
       return;
     }
     if (currentIndex <= 0) {
-      playerRef.current?.seekTo?.(0, true);
+      if (a) a.currentTime = 0;
       return;
     }
     const n = currentIndex - 1;
     setCurrentIndex(n);
     const t = queue[n];
-    if (t) loadAndPlay(t.id);
-  }, [position, currentIndex, queue, loadAndPlay]);
+    if (t) loadAndPlay(t);
+  }, [currentIndex, queue, loadAndPlay]);
 
-  const handleEnded = useCallback(() => {
-    if (repeat === "one" && current) {
-      playerRef.current?.seekTo?.(0, true);
-      playerRef.current?.playVideo?.();
+  handleEndedRef.current = () => {
+    if (repeat === "one" && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {});
       return;
     }
     next();
-  }, [repeat, current, next]);
+  };
 
   const seek = useCallback((s: number) => {
-    playerRef.current?.seekTo?.(s, true);
+    if (audioRef.current) audioRef.current.currentTime = s;
     setPosition(s);
   }, []);
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v);
-    playerRef.current?.setVolume?.(v);
-    if (v > 0 && muted) {
-      playerRef.current?.unMute?.();
-      setMuted(false);
-    }
+    if (v > 0 && muted) setMuted(false);
   }, [muted]);
 
-  const toggleMute = useCallback(() => {
-    if (muted) {
-      playerRef.current?.unMute?.();
-      setMuted(false);
-    } else {
-      playerRef.current?.mute?.();
-      setMuted(true);
-    }
-  }, [muted]);
-
+  const toggleMute = useCallback(() => setMuted((m) => !m), []);
   const toggleShuffle = useCallback(() => setShuffle((s) => !s), []);
   const cycleRepeat = useCallback(
     () => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off")),
@@ -287,26 +272,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addToLibrary = useCallback((track: Track) => {
-    setLibrary((l) => (l.some((t) => t.id === track.id) ? l : [track, ...l]));
+    setLibraryState((l) => (l.some((t) => t.id === track.id) ? l : [track, ...l]));
   }, []);
+
+  const setLibrary = useCallback((tracks: Track[]) => setLibraryState(tracks), []);
 
   const addToQueue = useCallback((track: Track) => {
     setQueue((q) => [...q, track]);
   }, []);
 
   const removeFromQueue = useCallback((index: number) => {
-    setQueue((q) => {
-      const next = q.filter((_, i) => i !== index);
-      return next;
-    });
+    setQueue((q) => q.filter((_, i) => i !== index));
     setCurrentIndex((ci) => (index < ci ? ci - 1 : ci));
   }, []);
 
   const createPlaylist = useCallback((name: string) => {
-    setPlaylists((p) => [
-      ...p,
-      { id: crypto.randomUUID(), name, tracks: [] },
-    ]);
+    setPlaylists((p) => [...p, { id: crypto.randomUUID(), name, tracks: [] }]);
   }, []);
 
   const addToPlaylist = useCallback((playlistId: string, track: Track) => {
@@ -319,23 +300,35 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  useEffect(() => {
+    if (library.length === 0) {
+      api
+        .chart()
+        .then((tracks) => {
+          if (tracks?.length) setLibraryState(tracks);
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   const value = useMemo<PlayerCtx>(
     () => ({
       library, liked, history, playlists,
       queue, currentIndex, current,
-      isPlaying, isReady, position, duration,
-      volume, muted, shuffle, repeat,
+      isPlaying, isReady, isLoadingTrack, position, duration,
+      volume, muted, shuffle, repeat, error,
       playTrack, playQueue, togglePlay, next, prev, seek,
       setVolume, toggleMute, toggleShuffle, cycleRepeat,
-      toggleLike, addToLibrary, addToQueue, removeFromQueue,
-      createPlaylist, addToPlaylist, setPlayerEl,
+      toggleLike, addToLibrary, setLibrary, addToQueue, removeFromQueue,
+      createPlaylist, addToPlaylist,
     }),
     [
       library, liked, history, playlists, queue, currentIndex, current,
-      isPlaying, isReady, position, duration, volume, muted, shuffle, repeat,
+      isPlaying, isReady, isLoadingTrack, position, duration, volume, muted,
+      shuffle, repeat, error,
       playTrack, playQueue, togglePlay, next, prev, seek, setVolume, toggleMute,
-      toggleShuffle, cycleRepeat, toggleLike, addToLibrary, addToQueue,
-      removeFromQueue, createPlaylist, addToPlaylist, setPlayerEl,
+      toggleShuffle, cycleRepeat, toggleLike, addToLibrary, setLibrary,
+      addToQueue, removeFromQueue, createPlaylist, addToPlaylist,
     ]
   );
 
